@@ -297,9 +297,23 @@ class Obtainium extends StatefulWidget {
 class _ObtainiumState extends State<Obtainium> with WidgetsBindingObserver {
   var existingUpdateInterval = -1;
 
-  /// Interval the periodic task is currently registered for, so [build] does
-  /// not re-register it on every rebuild.
+  /// Registration currently applied to the periodic task, so [build] does not
+  /// re-register it on every rebuild. Charging and unmetered network are part
+  /// of the WorkManager request: Android holds the task until they are met
+  /// instead of waking ObtainX to skip the run.
   int? _scheduledIntervalMinutes;
+  bool? _scheduledRequiresCharging;
+  bool? _scheduledUnmeteredNetwork;
+
+  /// Latest registration requested, including one that has not reached
+  /// WorkManager yet. Kept apart from the applied values so a slow first
+  /// register (prefs not loaded, charging requirement still off) cannot
+  /// finish after the real settings and put the old constraints back.
+  int? _desiredIntervalMinutes;
+  bool? _desiredRequiresCharging;
+  bool? _desiredUnmeteredNetwork;
+  bool _workManagerScheduleInFlight = false;
+  int _workManagerGeneration = 0;
 
   // Guards the lazy, one-shot attempt to adopt the device's explicit system
   // font family. Kicked off from [build] off the cold-start critical path; the
@@ -354,32 +368,91 @@ class _ObtainiumState extends State<Obtainium> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _scheduleWorkManager(int intervalMinutes) async {
+  Future<void> _scheduleWorkManager(
+    int intervalMinutes, {
+    required bool requiresCharging,
+    required bool unmeteredNetworkOnly,
+  }) async {
     // Wake on the user's own interval rather than every 15 minutes only to find
     // nothing is due. Android still decides when within the period to run, and
-    // clamps anything below its floor.
-    if (_scheduledIntervalMinutes == intervalMinutes) return;
-    _scheduledIntervalMinutes = intervalMinutes;
-    await Workmanager().registerPeriodicTask(
-      _workManagerTaskName,
-      _workManagerTaskName,
-      frequency: Duration(
-        minutes: max(_minimumWorkManagerIntervalMinutes, intervalMinutes),
-      ),
-      constraints: Constraints(
-        networkType: NetworkType.connected,
-        requiresBatteryNotLow: false,
-        requiresDeviceIdle: false,
-        requiresStorageNotLow: false,
-      ),
-      // `keep` pins the task to whatever frequency it was first registered
-      // with, so a changed interval would never reach an existing install.
-      existingWorkPolicy: ExistingPeriodicWorkPolicy.update,
-    );
+    // clamps anything below its floor. Charging and Wi-Fi limits are constraints
+    // on that wake: a check that comes due while unplugged or off Wi-Fi waits,
+    // and runs once the phone is plugged in or back on an unmetered network.
+    if (_desiredIntervalMinutes == intervalMinutes &&
+        _desiredRequiresCharging == requiresCharging &&
+        _desiredUnmeteredNetwork == unmeteredNetworkOnly &&
+        (_workManagerScheduleInFlight ||
+            (_scheduledIntervalMinutes == intervalMinutes &&
+                _scheduledRequiresCharging == requiresCharging &&
+                _scheduledUnmeteredNetwork == unmeteredNetworkOnly))) {
+      return;
+    }
+    _desiredIntervalMinutes = intervalMinutes;
+    _desiredRequiresCharging = requiresCharging;
+    _desiredUnmeteredNetwork = unmeteredNetworkOnly;
+    _workManagerGeneration++;
+    if (_workManagerScheduleInFlight) return;
+    _workManagerScheduleInFlight = true;
+    try {
+      while (true) {
+        final int generationAtStart = _workManagerGeneration;
+        final int? intervalMinutesToRegister = _desiredIntervalMinutes;
+        final bool? requiresChargingToRegister = _desiredRequiresCharging;
+        final bool? unmeteredNetworkToRegister = _desiredUnmeteredNetwork;
+        if (intervalMinutesToRegister == null ||
+            requiresChargingToRegister == null ||
+            unmeteredNetworkToRegister == null) {
+          break;
+        }
+        await Workmanager().registerPeriodicTask(
+          _workManagerTaskName,
+          _workManagerTaskName,
+          frequency: Duration(
+            minutes: max(
+              _minimumWorkManagerIntervalMinutes,
+              intervalMinutesToRegister,
+            ),
+          ),
+          constraints: Constraints(
+            networkType: unmeteredNetworkToRegister
+                ? NetworkType.unmetered
+                : NetworkType.connected,
+            requiresCharging: requiresChargingToRegister,
+            requiresBatteryNotLow: false,
+            requiresDeviceIdle: false,
+            requiresStorageNotLow: false,
+          ),
+          // `keep` pins the task to whatever frequency it was first registered
+          // with, so a changed interval would never reach an existing install.
+          existingWorkPolicy: ExistingPeriodicWorkPolicy.update,
+        );
+        if (generationAtStart != _workManagerGeneration) {
+          // A newer request, or a cancel, landed while this register was in
+          // flight. A late register would otherwise restore the old constraints
+          // after cancel, so undo it and apply whatever is desired now.
+          if (_desiredIntervalMinutes == null) {
+            await Workmanager().cancelByUniqueName(_workManagerTaskName);
+          }
+          continue;
+        }
+        _scheduledIntervalMinutes = intervalMinutesToRegister;
+        _scheduledRequiresCharging = requiresChargingToRegister;
+        _scheduledUnmeteredNetwork = unmeteredNetworkToRegister;
+        break;
+      }
+    } finally {
+      _workManagerScheduleInFlight = false;
+    }
   }
 
   Future<void> _cancelWorkManager() async {
+    _workManagerGeneration++;
+    _desiredIntervalMinutes = null;
+    _desiredRequiresCharging = null;
+    _desiredUnmeteredNetwork = null;
     _scheduledIntervalMinutes = null;
+    _scheduledRequiresCharging = null;
+    _scheduledUnmeteredNetwork = null;
     await Workmanager().cancelByUniqueName(_workManagerTaskName);
   }
 
@@ -716,6 +789,8 @@ class _ObtainiumState extends State<Obtainium> with WidgetsBindingObserver {
       (s) => Object.hash(
         s.updateInterval,
         s.useFGService,
+        s.bgUpdatesWhileChargingOnly,
+        s.bgUpdatesOnWiFiOnly,
         s.prefs == null,
         s.forcedLocale,
         s.appAccentColorSource,
@@ -774,7 +849,13 @@ class _ObtainiumState extends State<Obtainium> with WidgetsBindingObserver {
         startForegroundService(false);
       } else {
         stopForegroundService();
-        unawaited(_scheduleWorkManager(settingsProvider.updateInterval));
+        unawaited(
+          _scheduleWorkManager(
+            settingsProvider.updateInterval,
+            requiresCharging: settingsProvider.bgUpdatesWhileChargingOnly,
+            unmeteredNetworkOnly: settingsProvider.bgUpdatesOnWiFiOnly,
+          ),
+        );
       }
     }
     if (settingsProvider.prefs == null) {
