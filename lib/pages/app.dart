@@ -18,7 +18,6 @@ import 'package:obtainium/components/app_bottom_sheet.dart';
 import 'package:obtainium/components/app_page_section_title.dart';
 import 'package:obtainium/components/app_smooth_surface.dart';
 import 'package:obtainium/components/category_action_chip.dart';
-import 'package:obtainium/components/generated_form_model.dart';
 import 'package:obtainium/pages/additional_options_page.dart';
 import 'package:obtainium/pages/page_route_slide_up.dart';
 import 'package:obtainium/theme/app_dialog_theme.dart';
@@ -2799,6 +2798,9 @@ class _AppPageState extends State<AppPage> with WidgetsBindingObserver {
       context,
       listen: false,
     );
+    final bool includePrereleases = context
+        .read<SettingsProvider>()
+        .includePrereleasesByDefault;
     try {
       final AppInMemory? currentListing = appsProvider.apps[currentListingKey];
       if (currentListing == null) return;
@@ -2810,10 +2812,10 @@ class _AppPageState extends State<AppPage> with WidgetsBindingObserver {
       final AppSource destinationSource = _sourceProvider.getSource(
         candidateUrl,
       );
-      final Map<String, dynamic> destinationSettings =
-          getDefaultValuesFromFormItems(
-            destinationSource.combinedAppSpecificSettingFormItems,
-          );
+      final Map<String, dynamic> destinationSettings = newAppDefaultSettings(
+        destinationSource,
+        includePrereleases: includePrereleases,
+      );
       // This action starts from a listing whose package is already known.
       // Supplying it avoids downloading an APK merely to rediscover the same ID
       // and prevents a store page from being associated with the wrong package.

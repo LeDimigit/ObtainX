@@ -1807,6 +1807,7 @@ class AppsProvider with ChangeNotifier {
       urls,
       alreadyAddedUrls: apps.values.map((e) => e.app.url).toSet(),
       sourceOverride: sourceOverride,
+      includePrereleases: settingsProvider.includePrereleasesByDefault,
     );
     final List<App> pps = results[0];
     final Map<String, dynamic> errorsMap = results[1];

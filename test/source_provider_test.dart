@@ -1770,6 +1770,31 @@ void main() {
     },
   );
 
+  test('a batch add includes prereleases when that is the default', () async {
+    // Batch search adds and GitHub Stars imports go through here.
+    Future<App> added({required bool includePrereleases}) async {
+      final List<dynamic> batch = await SourceProvider().getAppsByURLNaive(
+        ['https://example.com/app'],
+        sourceOverride: _StubPrereleaseSource(),
+        includePrereleases: includePrereleases,
+      );
+      return (batch[0] as List<App>).single;
+    }
+
+    expect(
+      (await added(
+        includePrereleases: true,
+      )).additionalSettings['includePrereleases'],
+      true,
+    );
+    expect(
+      (await added(
+        includePrereleases: false,
+      )).additionalSettings['includePrereleases'],
+      false,
+    );
+  });
+
   test("a link's settings go over the defaults, its package ID over the "
       'lookup', () async {
     final App app = await SourceProvider().getAppByURLNaive(

@@ -1652,6 +1652,25 @@ bool isVersionPseudo(App app) =>
     app.settings.getBool('trackOnly') ||
     (app.installedVersion != null && !app.usesStandardVersionDetection);
 
+/// The settings a newly added app on [source] starts with: the source's
+/// defaults, with "Include prereleases" turned on when [includePrereleases]
+/// (the "Include pre-releases by default" setting) and the source offers it.
+///
+/// Every way of adding an app other than the Add app form starts here, so the
+/// setting reaches them all. The form pre-ticks the switch it shows instead.
+Map<String, dynamic> newAppDefaultSettings(
+  AppSource source, {
+  required bool includePrereleases,
+}) {
+  final Map<String, dynamic> defaults = getDefaultValuesFromFormItems(
+    source.combinedAppSpecificSettingFormItems,
+  );
+  if (includePrereleases && defaults.containsKey('includePrereleases')) {
+    defaults['includePrereleases'] = true;
+  }
+  return defaults;
+}
+
 class SourceProvider {
   static final SourceProvider _instance = SourceProvider._();
   factory SourceProvider() => _instance;
@@ -2088,12 +2107,10 @@ class SourceProvider {
     Map<String, dynamic> settings = const {},
   }) {
     final source = sourceOverride ?? getSource(url);
-    final Map<String, dynamic> defaults = getDefaultValuesFromFormItems(
-      source.combinedAppSpecificSettingFormItems,
+    final Map<String, dynamic> defaults = newAppDefaultSettings(
+      source,
+      includePrereleases: includePrereleases,
     );
-    if (includePrereleases && defaults.containsKey('includePrereleases')) {
-      defaults['includePrereleases'] = true;
-    }
     return getApp(
       source,
       url,
@@ -2108,6 +2125,7 @@ class SourceProvider {
     List<String> urls, {
     Set<String> alreadyAddedUrls = const {},
     AppSource? sourceOverride,
+    bool includePrereleases = false,
   }) async {
     final List<App> apps = [];
     final Map<String, dynamic> errors = {};
@@ -2121,7 +2139,11 @@ class SourceProvider {
             if (alreadyAddedUrls.contains(url)) {
               throw ObtainiumError(tr('appAlreadyAdded'));
             }
-            return await getAppByURLNaive(url, sourceOverride: sourceOverride);
+            return await getAppByURLNaive(
+              url,
+              sourceOverride: sourceOverride,
+              includePrereleases: includePrereleases,
+            );
           } catch (e) {
             return e;
           }
