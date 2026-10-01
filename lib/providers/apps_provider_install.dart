@@ -431,15 +431,13 @@ extension AppsProviderInstall on AppsProvider {
     String listingKey,
     int errorCode,
   ) async {
-    final InstallError installError = InstallError(errorCode);
-    final String message = installError.data['message']?.toString() ?? '';
-    if (message.contains('INCOMPATIBLE')) {
-      await _rememberBlockingAttention(
-        listingKey,
-        needsAttentionInstallIncompatible,
-      );
+    // Matched on the status code: the message is the enum's name
+    // ('failureIncompatible'), which a search for 'INCOMPATIBLE' never found.
+    final String? attentionCode = installFailureNeedsAttentionCode(errorCode);
+    if (attentionCode != null) {
+      await _rememberBlockingAttention(listingKey, attentionCode);
     }
-    throw installError;
+    throw InstallError(errorCode);
   }
 
   /// Returns the renamed file and the resolved app; callers must use the

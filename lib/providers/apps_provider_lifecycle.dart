@@ -1199,12 +1199,11 @@ extension AppsProviderLifecycle on AppsProvider {
     );
     final revision = AppCheckStore.newRevision();
     try {
-      await tmpFile.writeAsString(
-        jsonEncode(app.toJson()..[appRecordRevisionKey] = revision),
-        flush: true,
-      );
+      final Map<String, dynamic> record = app.toJson()
+        ..[appRecordRevisionKey] = revision;
+      await tmpFile.writeAsString(jsonEncode(record), flush: true);
       await tmpFile.rename(filePath);
-      checks.revisions[listingKey] = revision;
+      checks.rememberRecord(listingKey, revision, record);
     } finally {
       try {
         if (await tmpFile.exists()) await tmpFile.delete();
@@ -1367,11 +1366,13 @@ extension AppsProviderLifecycle on AppsProvider {
                 this.apps.containsListingKey(listingKey) ||
                 cached != null) {
               final revision = checks.revisions[listingKey];
+              // Compared with what's on disk, not with [cached]: a caller may
+              // already have put this very change into the in-memory app.
               if (!updateInstalledInfo &&
                   checks.isAvailable &&
                   cached != null &&
                   revision != null &&
-                  onlyAppCheckTimeChanged(cached.app, app)) {
+                  checks.onlyCheckTimeDiffersFromRecord(listingKey, app)) {
                 checkpoints.add({
                   'id': listingKey,
                   'revision': revision,

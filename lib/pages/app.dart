@@ -862,6 +862,7 @@ enum _UnsavedAction { keepEditing, discard, saveAndExit }
     needsAttentionInstallIncompatible => tr(
       'needsAttentionInstallIncompatible',
     ),
+    needsAttentionInstallConflict => tr('needsAttentionInstallConflict'),
     _ => '',
   };
   if (message.isEmpty) return null;

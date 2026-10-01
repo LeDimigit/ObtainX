@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:android_package_installer/android_package_installer.dart';
 import 'package:android_package_manager/android_package_manager.dart';
 import 'package:crypto/crypto.dart';
 import 'package:obtainium/custom_errors.dart';
@@ -29,6 +30,7 @@ const needsAttentionDetailKey = 'needsAttentionDetail';
 const needsAttentionVersionFilter = 'versionFilter';
 const needsAttentionIdChanged = 'idChanged';
 const needsAttentionInstallIncompatible = 'installIncompatible';
+const needsAttentionInstallConflict = 'installConflict';
 
 const List<String> _releaseFilterSettingKeys = [
   'apkFilterRegEx',
@@ -104,11 +106,26 @@ bool appHasBlockingAttention(App app) {
     case needsAttentionIdChanged:
       return app.allowIdChange != true;
     case needsAttentionInstallIncompatible:
+    case needsAttentionInstallConflict:
       return true;
     default:
       return false;
   }
 }
+
+/// The Needs attention code for an install that failed with the Android
+/// installer status [installerStatus], or null when trying again can work.
+///
+/// Both codes fail the same way on every attempt until the user acts: an
+/// incompatible build needs a different APK picked, and a conflict (usually a
+/// different signing key) needs the installed app removed or another source.
+String? installFailureNeedsAttentionCode(int installerStatus) =>
+    switch (PackageInstallerStatus.byCode(installerStatus)) {
+      PackageInstallerStatus.failureIncompatible =>
+        needsAttentionInstallIncompatible,
+      PackageInstallerStatus.failureConflict => needsAttentionInstallConflict,
+      _ => null,
+    };
 
 bool appNeedsAttention(App app) =>
     app.hasPendingRepoRename || appHasBlockingAttention(app);

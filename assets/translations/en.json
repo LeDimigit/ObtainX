@@ -664,6 +664,7 @@
     "needsAttentionVersionFilter": "A version or file filter no longer matches a release.",
     "needsAttentionIdChanged": "The downloaded package ID is {}, not the tracked one.",
     "needsAttentionInstallIncompatible": "The install was rejected because the build does not match this device.",
+    "needsAttentionInstallConflict": "The install was rejected because it conflicts with the installed app, usually because it is signed with a different key.",
     "pickApkSaveDir": "Pick APK save folder",
     "saveDownloadedApkCopies": "Save downloaded assets to the folder",
     "apkSaveFolderDescription": "Downloaded update assets (e.g. APKs) will be saved here.",

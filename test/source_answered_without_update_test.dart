@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:android_package_installer/android_package_installer.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:obtainium/custom_errors.dart';
 import 'package:obtainium/pages/app.dart';
@@ -185,6 +186,42 @@ void main() {
       expect(
         appNeedsAttention(mismatched.copyWith(allowIdChange: true)),
         isFalse,
+      );
+    });
+
+    test('installs that fail the same way every time are kept', () {
+      expect(
+        installFailureNeedsAttentionCode(
+          PackageInstallerStatus.failureIncompatible.code,
+        ),
+        needsAttentionInstallIncompatible,
+      );
+      expect(
+        installFailureNeedsAttentionCode(
+          PackageInstallerStatus.failureConflict.code,
+        ),
+        needsAttentionInstallConflict,
+      );
+      // Anything a later try can get past isn't.
+      for (final PackageInstallerStatus status in [
+        PackageInstallerStatus.failure,
+        PackageInstallerStatus.failureBlocked,
+        PackageInstallerStatus.failureAborted,
+        PackageInstallerStatus.failureInvalid,
+        PackageInstallerStatus.failureStorage,
+        PackageInstallerStatus.unknown,
+      ]) {
+        expect(installFailureNeedsAttentionCode(status.code), isNull);
+      }
+      expect(
+        appNeedsAttention(
+          _previouslyFetched().copyWith(
+            additionalSettings: {
+              needsAttentionCodeKey: needsAttentionInstallConflict,
+            },
+          ),
+        ),
+        isTrue,
       );
     });
   });
