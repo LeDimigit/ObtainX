@@ -511,10 +511,16 @@ void main() {
       ),
       checked.copyWith(lastUpdateCheck: null),
     ]) {
-      expect(store.onlyCheckTimeDiffersFromRecord(original.id, changed), isFalse);
+      expect(
+        store.onlyCheckTimeDiffersFromRecord(original.id, changed),
+        isFalse,
+      );
     }
     // Nothing is known about a record that was never read or written.
-    expect(store.onlyCheckTimeDiffersFromRecord('org.other.app', checked), isFalse);
+    expect(
+      store.onlyCheckTimeDiffersFromRecord('org.other.app', checked),
+      isFalse,
+    );
   });
 
   test(

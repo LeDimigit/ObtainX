@@ -127,21 +127,6 @@ class SettingsPageState extends State<SettingsPage> {
     'categories',
   ];
 
-  static const List<int> updateIntervalNodes = [
-    15,
-    30,
-    60,
-    120,
-    180,
-    360,
-    720,
-    1440,
-    4320,
-    10080,
-    20160,
-    43200,
-  ];
-
   @override
   void dispose() {
     _expandedSettingsSections.dispose();
@@ -1057,7 +1042,6 @@ class _UpdatesSection extends StatelessWidget {
 
   static int _updateSettingsHash(SettingsProvider sp) => Object.hash(
     sp.updateInterval,
-    sp.updateIntervalSliderVal,
     sp.useFGService,
     sp.enableBackgroundUpdates,
     sp.bgUpdatesOnWiFiOnly,
@@ -1318,16 +1302,20 @@ class _UpdateIntervalSliderState extends State<_UpdateIntervalSlider> {
     super.dispose();
   }
 
+  static const List<int> _stops = SettingsProvider.updateIntervalStops;
+
+  /// Position 0 is never; the stop at index n sits at n + 1.
   int _intervalForVal(double val) {
-    final int index = val.round().clamp(
-      0,
-      SettingsPageState.updateIntervalNodes.length,
-    );
+    final int index = val.round().clamp(0, _stops.length);
     if (index == 0) {
       return 0;
     }
-    return SettingsPageState.updateIntervalNodes[index - 1];
+    return _stops[index - 1];
   }
+
+  /// [SettingsProvider.updateInterval] is always a stop or 0, so this is exact.
+  double _valForInterval(int minutes) =>
+      minutes == 0 ? 0 : (_stops.indexOf(minutes) + 1).toDouble();
 
   String _labelForVal(double val) {
     final int minutes = _intervalForVal(val);
@@ -1347,8 +1335,8 @@ class _UpdateIntervalSliderState extends State<_UpdateIntervalSlider> {
   Widget build(BuildContext context) {
     final double sliderVal =
         _dragValue ??
-        context.select<SettingsProvider, double>(
-          (s) => s.updateIntervalSliderVal,
+        _valForInterval(
+          context.select<SettingsProvider, int>((s) => s.updateInterval),
         );
     final String label = _labelForVal(sliderVal);
     final isTV = context.read<SettingsProvider>().isTV;
@@ -1380,16 +1368,14 @@ class _UpdateIntervalSliderState extends State<_UpdateIntervalSlider> {
                 TVSliderWrapper(
                   value: sliderVal,
                   min: 0,
-                  max: SettingsPageState.updateIntervalNodes.length.toDouble(),
-                  divisions: SettingsPageState.updateIntervalNodes.length,
+                  max: _stops.length.toDouble(),
+                  divisions: _stops.length,
                   onChanged: (double value) {
                     setState(() => _dragValue = value);
                   },
                   onChangeEnd: (double value) {
-                    final SettingsProvider sp = context
-                        .read<SettingsProvider>();
-                    sp.updateIntervalSliderVal = value;
-                    sp.updateInterval = _intervalForVal(value);
+                    context.read<SettingsProvider>().updateInterval =
+                        _intervalForVal(value);
                     setState(() => _dragValue = null);
                   },
                   child: SliderTheme(
@@ -1407,22 +1393,16 @@ class _UpdateIntervalSliderState extends State<_UpdateIntervalSlider> {
                     ),
                     child: Slider(
                       focusNode: isTV ? _sliderFocusNode : null,
-                      value: sliderVal.clamp(
-                        0,
-                        SettingsPageState.updateIntervalNodes.length.toDouble(),
-                      ),
-                      max: SettingsPageState.updateIntervalNodes.length
-                          .toDouble(),
-                      divisions: SettingsPageState.updateIntervalNodes.length,
+                      value: sliderVal.clamp(0, _stops.length.toDouble()),
+                      max: _stops.length.toDouble(),
+                      divisions: _stops.length,
                       label: label,
                       onChanged: (double value) {
                         setState(() => _dragValue = value);
                       },
                       onChangeEnd: (double value) {
-                        final SettingsProvider sp = context
-                            .read<SettingsProvider>();
-                        sp.updateIntervalSliderVal = value;
-                        sp.updateInterval = _intervalForVal(value);
+                        context.read<SettingsProvider>().updateInterval =
+                            _intervalForVal(value);
                         setState(() => _dragValue = null);
                       },
                     ),

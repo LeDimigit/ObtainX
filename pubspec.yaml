@@ -25,7 +25,6 @@ dependencies:
   flutter:
     sdk: flutter
 
-  cupertino_icons: ^1.0.9
   path_provider: ^2.1.6
   flutter_fgbg: ^0.8.0
   flutter_local_notifications: ^22.0.1
@@ -76,7 +75,6 @@ dependencies:
   collection: ^1.19.1
   bcrypt: ^1.2.0
   app_links: ^7.2.1
-  equations: ^6.0.0
   shizuku_apk_installer: # TODO: Forked dependency; watch upstream for releases
     git:
       url: https://github.com/ImranR98/shizuku_apk_installer
