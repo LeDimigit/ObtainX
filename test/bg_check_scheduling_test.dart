@@ -107,12 +107,10 @@ class _RecordingFactory implements DatabaseFactory {
 Future<_DueTestProvider> _provider({
   int updateInterval = 1440,
   bool onlyInstalledOrTrackOnly = false,
-  bool useFGService = false,
 }) async {
   SharedPreferences.setMockInitialValues({
     'updateInterval': updateInterval,
     'onlyCheckInstalledOrTrackOnlyApps': onlyInstalledOrTrackOnly,
-    'useFGService': useFGService,
   });
   final provider = _DueTestProvider();
   provider.settingsProvider.prefs = await SharedPreferences.getInstance();
@@ -203,102 +201,6 @@ void main() {
       );
 
       expect(provider.earliestNextUpdateCheckDue(), isNull);
-    });
-
-    test('earlyBy brings the due time forward by the same margin', () async {
-      final provider = await _provider();
-      final checked = DateTime.now().subtract(const Duration(hours: 2));
-      provider.apps['a'] = AppInMemory(
-        _app(id: 'a', lastUpdateCheck: checked),
-        null,
-        null,
-        null,
-      );
-
-      expect(
-        provider.earliestNextUpdateCheckDue(earlyBy: const Duration(hours: 12)),
-        checked.add(const Duration(hours: 12)),
-      );
-    });
-  });
-
-  group('getAppsSortedByUpdateCheckTime earlyBy', () {
-    // A 24-hour interval: one app is 20 hours into it, the other 6.
-    Future<_DueTestProvider> withTwoApps() async {
-      final provider = await _provider();
-      provider.apps['nearlyDue'] = AppInMemory(
-        _app(
-          id: 'nearlyDue',
-          lastUpdateCheck: DateTime.now().subtract(const Duration(hours: 20)),
-        ),
-        null,
-        null,
-        null,
-      );
-      provider.apps['recent'] = AppInMemory(
-        _app(
-          id: 'recent',
-          lastUpdateCheck: DateTime.now().subtract(const Duration(hours: 6)),
-        ),
-        null,
-        null,
-        null,
-      );
-      return provider;
-    }
-
-    test('without a margin only apps past their interval are due', () async {
-      final provider = await withTwoApps();
-
-      expect(provider.getAppsSortedByUpdateCheckTime(), isEmpty);
-    });
-
-    test('an app due within the margin is checked now', () async {
-      final provider = await withTwoApps();
-
-      expect(
-        provider.getAppsSortedByUpdateCheckTime(
-          earlyBy: const Duration(hours: 12),
-        ),
-        ['nearlyDue'],
-      );
-    });
-  });
-
-  group('bgCheckEarlyBy', () {
-    test('is half the WorkManager wake period', () async {
-      final provider = await _provider(updateInterval: 1440);
-
-      expect(
-        bgCheckEarlyBy(provider.settingsProvider),
-        const Duration(hours: 12),
-      );
-    });
-
-    test('the foreground service wakes on its own repeat', () async {
-      final provider = await _provider(
-        updateInterval: 1440,
-        useFGService: true,
-      );
-
-      expect(
-        bgCheckEarlyBy(provider.settingsProvider),
-        foregroundServiceRepeatInterval ~/ 2,
-      );
-    });
-  });
-
-  group('bgInstallRetryDelay', () {
-    test('doubles from 15 minutes for each failure in a row', () {
-      expect(bgInstallRetryDelay(1), const Duration(minutes: 15));
-      expect(bgInstallRetryDelay(2), const Duration(minutes: 30));
-      expect(bgInstallRetryDelay(3), const Duration(minutes: 60));
-      expect(bgInstallRetryDelay(4), const Duration(minutes: 120));
-    });
-
-    test('stops once the retries are used up', () {
-      expect(bgInstallRetryDelay(5), isNull);
-      expect(bgInstallRetryDelay(0), isNull);
     });
   });
 

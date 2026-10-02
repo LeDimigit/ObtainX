@@ -67,27 +67,6 @@ const int _bgUpdateMaxAttempts = 4;
 const int _bgUpdateMaxRetryWaitSeconds = 30;
 const int _bgClientExceptionRetryWaitSeconds = 15 * 60;
 
-/// Android's floor for a periodic WorkManager task; shorter intervals are
-/// clamped up to it.
-const int minimumWorkManagerIntervalMinutes = 15;
-
-/// How often the foreground service runs [bgUpdateCheck].
-const Duration foregroundServiceRepeatInterval = Duration(minutes: 15);
-
-/// WorkManager unique name shared by every background install retry, so at
-/// most one chain of them is pending at a time.
-const String _bgInstallRetryTaskName = 'bg_install_retry';
-
-/// Input key marking a run as a background install retry. Its value is how
-/// many background install attempts in a row have failed so far.
-const String _bgInstallRetryFailuresKey = 'installRetryFailures';
-
-/// Failed background installs are retried this many times, the delay doubling
-/// from [_bgInstallRetryBaseDelay] (15, 30, 60 and 120 minutes), before they
-/// wait for the next scheduled check.
-const int _bgInstallMaxRetries = 4;
-const Duration _bgInstallRetryBaseDelay = Duration(minutes: 15);
-
 /// Legacy key written by ObtainX 2.9.7's reset-install-status action.
 ///
 /// Reconciliation removes it and restores the actual device version so affected
@@ -1896,73 +1875,19 @@ Constraints _bgTaskConstraints(SettingsProvider settings) => Constraints(
   requiresStorageNotLow: false,
 );
 
-/// How long to wait before retrying a background install that has now failed
-/// [failures] times in a row, or null once the retries are used up.
-@visibleForTesting
-Duration? bgInstallRetryDelay(int failures) {
-  if (failures < 1 || failures > _bgInstallMaxRetries) return null;
-  return _bgInstallRetryBaseDelay * (1 << (failures - 1));
-}
-
-/// Asks WorkManager to run the background task again after [delay], as an
-/// install retry carrying [failures] so the backoff continues along the chain.
-///
-/// Checks wake only once per update interval, so without this a failed or
-/// postponed install waited a whole interval for its next attempt (#317).
-///
-/// A run that is itself a retry ([fromRetry]) appends to its own chain:
-/// WorkManager starts the new request once this run finishes, and counts the
-/// delay from then. Replacing would cancel the running worker, and keeping
-/// would drop the request, since this run is still pending under that name.
-/// Any other run keeps a chain that is already pending, which will pick up
-/// this install too.
-Future<void> _scheduleBGInstallRetry({
-  required Duration delay,
-  required int failures,
-  required bool fromRetry,
-  required SettingsProvider settings,
-  required LogsProvider logs,
-}) async {
-  try {
-    await Workmanager().registerOneOffTask(
-      _bgInstallRetryTaskName,
-      _bgInstallRetryTaskName,
-      initialDelay: delay,
-      constraints: _bgTaskConstraints(settings),
-      existingWorkPolicy: fromRetry
-          ? ExistingWorkPolicy.append
-          : ExistingWorkPolicy.keep,
-      inputData: {_bgInstallRetryFailuresKey: failures},
-    );
-    unawaited(
-      logs.add(
-        'BG install task: Retry requested in ${delay.inMinutes} minutes '
-        '($failures failed so far).',
-      ),
-    );
-  } catch (e) {
-    unawaited(
-      logs.add(
-        'BG install task: Could not schedule a retry: $e',
-        level: LogLevel.warning,
-      ),
-    );
-  }
-}
-
-/// [retryFailures] is set when this run is a background install retry: how
-/// many attempts in a row had failed before it.
-Future<void> _runBGInstallMode(
+/// Installs [appIds] silently, and returns whether any of them is still
+/// waiting afterwards (postponed because the screen is on, or failed), so the
+/// next wake-up tries again.
+Future<bool> _runBGInstallMode(
   List<String> appIds,
   AppsProvider appsProvider,
   NotificationsProvider notificationsProvider,
-  LogsProvider logs, {
-  int? retryFailures,
-}) async {
+  LogsProvider logs,
+) async {
   unawaited(logs.add('BG install task: Started.'));
   if (appIds.isEmpty) {
     unawaited(logs.add('BG install task: No pending installs.'));
-    return;
+    return false;
   }
   if (await NativeFeatures.isDeviceInteractive()) {
     unawaited(
@@ -1970,19 +1895,12 @@ Future<void> _runBGInstallMode(
         'BG install task: Device is active (screen on). Postponing background installations.',
       ),
     );
-    // Waiting for the screen to go off is not a failure, so the count stays.
-    await _scheduleBGInstallRetry(
-      delay: _bgInstallRetryBaseDelay,
-      failures: retryFailures ?? 0,
-      fromRetry: retryFailures != null,
-      settings: appsProvider.settingsProvider,
-      logs: logs,
-    );
-    return;
+    return true;
   }
   unawaited(
     logs.add('BG install task: Installing ${appIds.length} apps silently.'),
   );
+  bool failed = false;
   try {
     await appsProvider.downloadAndInstallLatestApps(
       appIds,
@@ -1992,6 +1910,9 @@ Future<void> _runBGInstallMode(
     );
   } catch (e) {
     if (e is MultiAppMultiError) {
+      // The apps that did install are no longer pending, so the next wake-up
+      // attempts only the ones that failed.
+      failed = true;
       e.idsByErrorString.forEach((key, value) {
         final String failure = e.errorsAppsString(key, value);
         // Logged as well as notified: otherwise a failed download reads as a
@@ -2008,54 +1929,13 @@ Future<void> _runBGInstallMode(
           ),
         );
       });
-      // Every per-app error is retried, not only network ones: a SocketException
-      // reaches here as plain text, so they can't be told apart reliably. The
-      // retries are capped, and the apps that did install are no longer
-      // pending, so only the failed ones are attempted again.
-      final int failures = (retryFailures ?? 0) + 1;
-      final Duration? delay = bgInstallRetryDelay(failures);
-      if (delay != null) {
-        await _scheduleBGInstallRetry(
-          delay: delay,
-          failures: failures,
-          fromRetry: retryFailures != null,
-          settings: appsProvider.settingsProvider,
-          logs: logs,
-        );
-      } else {
-        unawaited(
-          logs.add(
-            'BG install task: No retries left after $_bgInstallMaxRetries; '
-            'waiting for the next scheduled check.',
-          ),
-        );
-      }
     } else {
       unawaited(logs.add('Fatal error in BG install task: ${e.toString()}'));
       rethrow;
     }
   }
   unawaited(logs.add('BG install task: Done installing updates.'));
-}
-
-/// How far ahead of its due time an app counts as due at a background wake-up.
-///
-/// The background task wakes about once per wake period, but each app's due
-/// time follows its own last check, which a foreground check can move to any
-/// point in between. Counted strictly, an app that came due just after a
-/// wake-up waited almost a whole extra period, so its check could slip to
-/// nearly twice the interval (#317). Checking it at whichever wake-up is
-/// nearer, up to half a period early, keeps it within half a period either way.
-Duration bgCheckEarlyBy(SettingsProvider settings) {
-  final Duration wakePeriod = settings.useFGService
-      ? foregroundServiceRepeatInterval
-      : Duration(
-          minutes: max(
-            minimumWorkManagerIntervalMinutes,
-            settings.updateInterval,
-          ),
-        );
-  return wakePeriod ~/ 2;
+  return failed;
 }
 
 /// Background update check and installation orchestrator.
@@ -2075,40 +1955,40 @@ Future<void> bgUpdateCheck(
 }) async {
   final bgLogs = logs ?? LogsProvider();
   WidgetsFlutterBinding.ensureInitialized();
+  params ??= {};
+  final SettingsProvider settingsProvider = settings ?? SettingsProvider();
+  await settingsProvider.initializeSettings();
+
+  // This task wakes every 15 minutes, not once per update interval, so most
+  // wake-ups have nothing to do: no check is due and no background install is
+  // waiting (see [bgNextCheckDue], cleared while one is). Deciding that first,
+  // before loading translations or any app record, keeps those wake-ups to a
+  // settings read and one log line. Skipping the app records also avoids the
+  // check timestamp database, whose contention made a concurrent foreground
+  // load wait on a lock. An explicit request (manual check, or a retry carrying
+  // its own list) always proceeds.
+  final DateTime? nextDue = settingsProvider.bgNextCheckDue;
+  if (!forceAll &&
+      params['toCheck'] == null &&
+      nextDue != null &&
+      DateTime.now().isBefore(nextDue)) {
+    unawaited(
+      bgLogs.add('BG task $taskId: Nothing due before $nextDue; skipped.'),
+    );
+    return;
+  }
+
   await EasyLocalization.ensureInitialized();
   await TranslationLoader.load();
-  params ??= {};
   unawaited(bgLogs.add('BG task started $taskId: $params'));
 
   final NotificationsProvider notificationsProvider =
       notifs ?? NotificationsProvider();
   final AppsProvider appsProvider = AppsProvider(
     isBg: true,
-    settingsProvider: settings,
+    settingsProvider: settingsProvider,
     logsProvider: bgLogs,
   );
-  await appsProvider.settingsProvider.initializeSettings();
-  final int? installRetryFailures = (params[_bgInstallRetryFailuresKey] as num?)
-      ?.toInt();
-  final Duration earlyBy = bgCheckEarlyBy(appsProvider.settingsProvider);
-
-  // Android wakes this task on its own cadence, not the user's check interval,
-  // so most wake-ups have nothing due. Returning here keeps those from reading
-  // every app record and opening the check timestamp database - the contention
-  // that made a concurrent foreground load wait on a database lock. An explicit
-  // request (manual check, a check retry carrying its own list, or an install
-  // retry, which has a pending install to attempt) always proceeds.
-  final DateTime? nextDue = appsProvider.settingsProvider.bgNextCheckDue;
-  if (!forceAll &&
-      params['toCheck'] == null &&
-      installRetryFailures == null &&
-      nextDue != null &&
-      DateTime.now().isBefore(nextDue)) {
-    unawaited(
-      bgLogs.add('BG update task: Nothing due before $nextDue; skipped load.'),
-    );
-    return;
-  }
 
   await appsProvider.loadApps();
 
@@ -2147,7 +2027,6 @@ Future<void> bgUpdateCheck(
                   .settingsProvider
                   .onlyCheckInstalledOrTrackOnlyApps,
               forceAll: forceAll,
-              earlyBy: earlyBy,
             )
             .map((e) => MapEntry(e, 0))),
   ];
@@ -2157,9 +2036,17 @@ Future<void> bgUpdateCheck(
       !netResult.contains(ConnectivityResult.wifi) &&
       !netResult.contains(ConnectivityResult.ethernet);
 
+  // "While charging" means plugged in. A phone plugged in at 100% reports
+  // full, and one held at a charge limit (Samsung's "Protect battery", say)
+  // reports connectedNotCharging; neither is actively charging, and treating
+  // them as unplugged meant installs never ran overnight.
   final chargingRestricted =
       appsProvider.settingsProvider.bgUpdatesWhileChargingOnly &&
-      (await Battery().batteryState) != BatteryState.charging;
+      !const {
+        BatteryState.charging,
+        BatteryState.full,
+        BatteryState.connectedNotCharging,
+      }.contains(await Battery().batteryState);
 
   if (networkRestricted) {
     unawaited(bgLogs.add('BG update task: Network restriction in effect.'));
@@ -2296,19 +2183,35 @@ Future<void> bgUpdateCheck(
       ),
     );
   }
-  if (canInstall) {
-    await _runBGInstallMode(
-      silentlyInstallable,
-      appsProvider,
-      notificationsProvider,
-      bgLogs,
-      retryFailures: installRetryFailures,
-    );
+  // Whether a background install is still waiting after this run: one that
+  // failed or was postponed for the screen, or one held back by the charging or
+  // Wi-Fi limit. That last case is the foreground service's: WorkManager does
+  // not start this task until both limits are met.
+  final bool installWaiting = canInstall
+      ? await _runBGInstallMode(
+          silentlyInstallable,
+          appsProvider,
+          notificationsProvider,
+          bgLogs,
+        )
+      : appsProvider
+            .findExistingUpdates(installedOnly: true, excludeOnDemandOnly: true)
+            .isNotEmpty;
+  // A retry carrying its own list never looked at the other pending installs,
+  // so it leaves the due time as its saves left it (cleared) and the next
+  // wake-up works it out in full.
+  if (params['toCheck'] == null) {
+    // Recorded after every save this run has made, so the next wake-up can
+    // skip its load. Cleared by [AppsProvider.markAppsChanged] on any later
+    // change, and left clear while an install is waiting, so the next wake-up
+    // tries it again rather than the next due check (#317). A run Android
+    // stops midway never gets here, so the due time stays clear or already past
+    // and the next wake-up runs too, resuming the partial downloads where the
+    // server allows it.
+    appsProvider.settingsProvider.bgNextCheckDue = installWaiting
+        ? null
+        : appsProvider.earliestNextUpdateCheckDue();
   }
-  // Recorded after every save this run has made, so the next wake-up can skip
-  // its load. Cleared by [AppsProvider.markAppsChanged] on any later change.
-  appsProvider.settingsProvider.bgNextCheckDue = appsProvider
-      .earliestNextUpdateCheckDue(earlyBy: earlyBy);
   // This engine is about to go away, so close its own connection rather than
   // leave it open for the life of the process. Closing is only safe because
   // each engine has a connection of its own (see [AppCheckStore]): a shared
