@@ -153,7 +153,8 @@ const bool debugForceFlaggedMalwareScan = false;
 // ── Build-verification enforcement (reproducible builds + GitHub attestation) ──
 // Pure predicates/messages that decide whether an install must be blocked
 // because the source did not meet an enabled verification requirement. The
-// status constants + reproducibleBuildStatusFromBool() live in source_provider.
+// status constants, reproducibleBuildStatusFromBool() and
+// reproducibleBuildStatusForEnforcement() live in source_provider.
 
 bool reproducibleBuildVerificationApplies(AppSource source) {
   return source is FDroid || source is FDroidRepo || source is IzzyOnDroid;
@@ -162,11 +163,6 @@ bool reproducibleBuildVerificationApplies(AppSource source) {
 bool reproducibleBuildEnforcementApplies(App app, AppSource source) {
   return app.additionalSettings['enforceReproducibleBuilds'] == true &&
       reproducibleBuildVerificationApplies(source);
-}
-
-String reproducibleBuildStatusForEnforcement(App app) {
-  return app.latestReproducibleStatus ??
-      reproducibleBuildStatusFromBool(app.latestIsReproducible);
 }
 
 bool reproducibleBuildEnforcementBlocksInstall(App app, AppSource source) {
@@ -425,6 +421,28 @@ extension AppsProviderInstall on AppsProvider {
       attemptToCorrectInstallStatus: false,
       updateInstalledInfo: false,
     );
+  }
+
+  /// Whether [app]'s current release already failed a pre-install check that
+  /// fails the same way every time, with that check still on. Background runs
+  /// leave such an app in Needs attention rather than download the release
+  /// again just to fail again; an update started by hand still runs the check.
+  @visibleForTesting
+  bool verificationWouldBlockAgain(App app) {
+    if (!appHasBlockingAttention(app)) return false;
+    AppSource source() =>
+        SourceProvider().getSource(app.url, overrideSource: app.overrideSource);
+    return switch (app.additionalSettings[needsAttentionCodeKey]) {
+      needsAttentionMalwareFlagged => willScanApkWithVirusTotal(app),
+      needsAttentionNotReproducible =>
+        reproducibleBuildEnforcementBlocksInstall(app, source()),
+      needsAttentionNoAttestation => githubAttestationEnforcementBlocksInstall(
+        app,
+        source(),
+        settingsProvider,
+      ),
+      _ => false,
+    };
   }
 
   Future<Never> _throwRecordedInstallError(
@@ -1504,7 +1522,15 @@ extension AppsProviderInstall on AppsProvider {
           apps[id]!.app = apps[id]!.app.copyWith(preferredApkIndex: urlInd);
           await saveApps([apps[id]!.app]);
         }
-        if (allowUserInteraction ||
+        if (!allowUserInteraction &&
+            verificationWouldBlockAgain(apps[id]!.app)) {
+          unawaited(
+            logs.add(
+              'Skipping background update of $id: this release already failed '
+              'a pre-install check (${apps[id]!.app.additionalSettings[needsAttentionCodeKey]}).',
+            ),
+          );
+        } else if (allowUserInteraction ||
             await canInstallSilentlyInBackground(apps[id]!.app)) {
           appsToInstall.add(id);
         }
@@ -2341,6 +2367,16 @@ extension AppsProviderInstall on AppsProvider {
       return _MalwareScanGateDecision.declined;
     }
     if (deleteDownloadOnSkip) cleanupOnSkip();
+    // A flagged APK is flagged again on every background retry, so without this
+    // the app silently stops updating. A scan that only failed to finish isn't
+    // recorded: the next try can get a verdict.
+    if (status == malwareScanStatusFlagged) {
+      await _rememberBlockingAttention(
+        app.listingKey,
+        needsAttentionMalwareFlagged,
+        detail: app.latestVersion,
+      );
+    }
     throw MalwareScanBlockedError(status, detail, appName: app.finalName);
   }
 
@@ -2588,9 +2624,18 @@ extension AppsProviderInstall on AppsProvider {
       overrideSource: app.overrideSource,
     );
 
-    // Reproducible-build enforcement.
+    // Reproducible-build enforcement. Only a "not reproducible" verdict is
+    // final for this release; no data yet, or a failed lookup, can pass later.
     if (reproducibleBuildEnforcementBlocksInstall(app, source)) {
       cleanupOnSkip();
+      if (reproducibleBuildStatusForEnforcement(app) ==
+          reproducibleBuildStatusNotReproducible) {
+        await _rememberBlockingAttention(
+          appId,
+          needsAttentionNotReproducible,
+          detail: app.latestVersion,
+        );
+      }
       throw ObtainiumError(reproducibleBuildEnforcedBlockedMessage());
     }
 
@@ -2616,6 +2661,15 @@ extension AppsProviderInstall on AppsProvider {
           ) &&
           attestationStatus != githubAttestationStatusVerified) {
         cleanupOnSkip();
+        // No attestation for this file stays that way; a lookup that failed
+        // can succeed next time.
+        if (attestationStatus == githubAttestationStatusUnsupported) {
+          await _rememberBlockingAttention(
+            appId,
+            needsAttentionNoAttestation,
+            detail: app.latestVersion,
+          );
+        }
         throw ObtainiumError(
           githubAttestationEnforcedBlockedMessage(attestationStatus),
         );

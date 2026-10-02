@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:android_package_installer/android_package_installer.dart';
 import 'package:android_package_manager/android_package_manager.dart';
 import 'package:crypto/crypto.dart';
+import 'package:obtainium/app_sources/github.dart';
 import 'package:obtainium/custom_errors.dart';
 import 'package:obtainium/providers/source_provider.dart';
 
@@ -31,6 +32,9 @@ const needsAttentionVersionFilter = 'versionFilter';
 const needsAttentionIdChanged = 'idChanged';
 const needsAttentionInstallIncompatible = 'installIncompatible';
 const needsAttentionInstallConflict = 'installConflict';
+const needsAttentionMalwareFlagged = 'malwareFlagged';
+const needsAttentionNotReproducible = 'notReproducible';
+const needsAttentionNoAttestation = 'noAttestation';
 
 const List<String> _releaseFilterSettingKeys = [
   'apkFilterRegEx',
@@ -108,9 +112,38 @@ bool appHasBlockingAttention(App app) {
     case needsAttentionInstallIncompatible:
     case needsAttentionInstallConflict:
       return true;
+    case needsAttentionMalwareFlagged:
+      // A clean rescan or excluding the app from scanning drops the scan
+      // status. A later scan that couldn't finish says nothing new, so it
+      // doesn't.
+      final String? scanStatus = app.latestMalwareScanStatus;
+      return _blockedReleaseIsCurrent(app) &&
+          scanStatus != null &&
+          scanStatus != malwareScanStatusClean;
+    case needsAttentionNotReproducible:
+      // Every check asks the verification server again, so a later verdict
+      // counts.
+      return _blockedReleaseIsCurrent(app) &&
+          app.additionalSettings['enforceReproducibleBuilds'] == true &&
+          reproducibleBuildStatusForEnforcement(app) ==
+              reproducibleBuildStatusNotReproducible;
+    case needsAttentionNoAttestation:
+      return _blockedReleaseIsCurrent(app) &&
+          GitHub.configuredBuildVerificationMode(app.additionalSettings) ==
+              GitHub.buildVerificationEnforce &&
+          app.latestAttestationStatus == githubAttestationStatusUnsupported;
     default:
       return false;
   }
+}
+
+/// Whether the release a pre-install check blocked (stored as the detail) is
+/// still the latest one, and not skipped. A newer release is checked afresh.
+bool _blockedReleaseIsCurrent(App app) {
+  final String latest = app.latestVersion;
+  return app.additionalSettings[needsAttentionDetailKey]?.toString() ==
+          latest &&
+      app.additionalSettings['skippedLatestVersion'] != latest;
 }
 
 /// The Needs attention code for an install that failed with the Android

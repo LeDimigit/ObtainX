@@ -170,6 +170,11 @@ bool? reproducibleBuildBoolFromStatus(String? status) {
   return null;
 }
 
+String reproducibleBuildStatusForEnforcement(App app) {
+  return app.latestReproducibleStatus ??
+      reproducibleBuildStatusFromBool(app.latestIsReproducible);
+}
+
 /// Whether [value] looks like an Android application id (e.g. `org.example.app`)
 /// rather than a human-readable app name. Used to decide when a source's
 /// readable name should replace a stale package-id-looking stored name.

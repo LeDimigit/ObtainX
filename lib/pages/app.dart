@@ -863,6 +863,11 @@ enum _UnsavedAction { keepEditing, discard, saveAndExit }
       'needsAttentionInstallIncompatible',
     ),
     needsAttentionInstallConflict => tr('needsAttentionInstallConflict'),
+    needsAttentionMalwareFlagged => tr('needsAttentionMalwareFlagged'),
+    needsAttentionNotReproducible => reproducibleBuildEnforcedBlockedMessage(),
+    needsAttentionNoAttestation => githubAttestationEnforcedBlockedMessage(
+      githubAttestationStatusUnsupported,
+    ),
     _ => '',
   };
   if (message.isEmpty) return null;
