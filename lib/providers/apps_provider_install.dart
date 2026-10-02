@@ -275,6 +275,28 @@ bool isStockInstallerDowngrade({
       newVersionCode < installedVersionCode;
 }
 
+/// Package ids of LSPosed modules that lift Android's version-downgrade block:
+/// Let Me Downgrade, and CorePatch under its legacy and "Core Patch N" ids
+/// (#327). They patch the system package manager itself (root + LSPosed), so an
+/// install needs nothing from ObtainX beyond skipping its own downgrade check.
+/// CorePatch's other bypasses (mismatched signatures, modified APKs) need not
+/// even that: ObtainX never blocks those before handing the install to Android.
+const List<String> downgradeModulePackageIds = [
+  'com.berdik.letmedowngrade',
+  'com.coderstory.toolkit',
+  'org.lsposed.corepatch',
+];
+
+/// Whether any of [downgradeModulePackageIds] is installed. Only installation
+/// is visible from here: a module that is installed but not enabled in LSPosed
+/// still counts, and Android then rejects the downgrade itself.
+Future<bool> isDowngradeModuleInstalled() async {
+  final List<PackageInfo?> modules = await Future.wait(
+    downgradeModulePackageIds.map(getInstalledInfo),
+  );
+  return modules.any((PackageInfo? info) => info != null);
+}
+
 /// App download, install, and on-device package operations for [AppsProvider].
 extension AppsProviderInstall on AppsProvider {
   /// Starts recording third-party installs the moment the system confirms them.
@@ -949,8 +971,12 @@ extension AppsProviderInstall on AppsProvider {
     }
   }
 
+  /// Whether a stock-installer downgrade should go to Android rather than be
+  /// blocked up front. The settings switch is ObtainX-only and an upstream sync
+  /// once dropped it from here, leaving the switch dead; keep both checks.
   Future<bool> canDowngradeApps() async =>
-      (await getInstalledInfo('com.berdik.letmedowngrade')) != null;
+      settingsProvider.enableDowngradeModules &&
+      await isDowngradeModuleInstalled();
 
   Future<void> unzipFile(String filePath, String destinationPath) async {
     await ZipFile.extractToDirectory(

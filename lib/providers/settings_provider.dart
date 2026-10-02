@@ -1451,11 +1451,14 @@ class SettingsProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  bool get enableLetMeDowngrade {
+  /// Whether an installed downgrade module (Let Me Downgrade or CorePatch) lets
+  /// stock-installer downgrades through to Android. The pref key predates
+  /// CorePatch support and stays as-is so existing prefs and backups carry over.
+  bool get enableDowngradeModules {
     return prefs?.getBool('enableLetMeDowngrade') ?? true;
   }
 
-  set enableLetMeDowngrade(bool value) {
+  set enableDowngradeModules(bool value) {
     prefs?.setBool('enableLetMeDowngrade', value);
     notifyListeners();
   }

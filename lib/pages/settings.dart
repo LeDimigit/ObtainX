@@ -2616,7 +2616,7 @@ class _IntegrationsSection extends StatefulWidget {
 class _IntegrationsSectionState extends State<_IntegrationsSection>
     with WidgetsBindingObserver {
   bool _appManagerInstalled = false;
-  bool _letMeDowngradeInstalled = false;
+  bool _downgradeModuleInstalled = false;
   bool _loading = true;
   late final TextEditingController _virusTotalApiKeyController;
   // Stored pref value as of the last sync - see [didChangeDependencies].
@@ -2688,14 +2688,14 @@ class _IntegrationsSectionState extends State<_IntegrationsSection>
   }
 
   Future<void> _checkInstalledApps() async {
-    final results = await Future.wait([
+    final (appManagerInfo, downgradeModuleInstalled) = await (
       getInstalledInfo('io.github.muntashirakon.AppManager'),
-      getInstalledInfo('com.berdik.letmedowngrade'),
-    ]);
+      isDowngradeModuleInstalled(),
+    ).wait;
     if (mounted) {
       setState(() {
-        _appManagerInstalled = results[0] != null;
-        _letMeDowngradeInstalled = results[1] != null;
+        _appManagerInstalled = appManagerInfo != null;
+        _downgradeModuleInstalled = downgradeModuleInstalled;
         _loading = false;
       });
     }
@@ -2705,7 +2705,7 @@ class _IntegrationsSectionState extends State<_IntegrationsSection>
     sp.openAppInfoInAppManager,
     sp.beforeNewInstallsShareToAppVerifier,
     sp.enableVirusTotalScanning,
-    sp.enableLetMeDowngrade,
+    sp.enableDowngradeModules,
     sp.installerMode,
     sp.shizukuPretendToBeGooglePlay,
     // The API key drives the field text and, with its validation fingerprint,
@@ -2800,16 +2800,16 @@ class _IntegrationsSectionState extends State<_IntegrationsSection>
           ),
         ),
         ExplainedWhenOff(
-          reason: !_loading && !_letMeDowngradeInstalled
-              ? tr('letMeDowngradeNotInstalledSnackbar')
+          reason: !_loading && !_downgradeModuleInstalled
+              ? tr('downgradeModuleNotInstalledSnackbar')
               : null,
           child: ListTile(
             title: Text(
-              tr('enableLetMeDowngrade'),
+              tr('enableDowngradeModules'),
               style: TextStyle(
                 color: _loading
                     ? cs.onSurface.withValues(alpha: 0.38)
-                    : _letMeDowngradeInstalled
+                    : _downgradeModuleInstalled
                     ? null
                     : cs.onSurface.withValues(alpha: 0.38),
               ),
@@ -2817,31 +2817,18 @@ class _IntegrationsSectionState extends State<_IntegrationsSection>
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                IconButton(
-                  tooltip: tr('about'),
-                  onPressed: () {
-                    launchUrlString(
-                      tr('aboutLetMeDowngradeUrl'),
-                      mode: LaunchMode.externalApplication,
-                    );
-                  },
-                  style: IconButton.styleFrom(
-                    foregroundColor: cs.onSurfaceVariant,
-                    iconSize: 20,
-                    padding: const EdgeInsets.all(4),
-                    minimumSize: const Size(32, 32),
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    visualDensity: VisualDensity.compact,
-                  ),
-                  icon: const Icon(Icons.open_in_new_rounded),
+                HelpHintIcon(
+                  message: tr('downgradeModulesTooltip'),
+                  size: 20,
+                  padding: EdgeInsets.zero,
                 ),
                 AppSwitch(
                   value:
                       !_loading &&
-                      _letMeDowngradeInstalled &&
-                      sp.enableLetMeDowngrade,
-                  onChanged: !_loading && _letMeDowngradeInstalled
-                      ? (bool value) => sp.enableLetMeDowngrade = value
+                      _downgradeModuleInstalled &&
+                      sp.enableDowngradeModules,
+                  onChanged: !_loading && _downgradeModuleInstalled
+                      ? (bool value) => sp.enableDowngradeModules = value
                       : null,
                 ),
               ],
