@@ -84,13 +84,30 @@ class AppCheckStore {
     final Duration timeout = budget ?? operationTimeout;
     try {
       return await (() async {
-        final database = await _open();
-        // A timed-out open can still finish later. Do not start its queued
-        // query/write after the caller has switched to durable JSON records.
-        if (_failure != null) {
-          throw _failure!;
+        for (var reopened = false; ; reopened = true) {
+          final Future<Database> connection = _connection();
+          final Database database;
+          try {
+            database = await connection;
+          } catch (_) {
+            if (identical(_database, connection)) _database = null;
+            rethrow;
+          }
+          // A timed-out open can still finish later. Do not start its queued
+          // query/write after the caller has switched to durable JSON records.
+          if (_failure != null) {
+            throw _failure!;
+          }
+          try {
+            return await action(database);
+          } on DatabaseException catch (error) {
+            // Something closed this connection under us. Holding on to it made
+            // every later read fail the same way until the process restarted
+            // (#317), so open a fresh one and try once more.
+            if (reopened || !error.isDatabaseClosedError()) rethrow;
+            if (identical(_database, connection)) _database = null;
+          }
         }
-        return action(database);
       })().timeout(
         timeout,
         onTimeout: () {
@@ -127,11 +144,18 @@ class AppCheckStore {
     }
   }
 
-  Future<Database> _open() async {
-    final pending = _database ??= (factory ?? databaseFactory).openDatabase(
+  /// The cached connection, opened on first use.
+  Future<Database> _connection() {
+    return _database ??= (factory ?? databaseFactory).openDatabase(
       path,
       options: OpenDatabaseOptions(
         version: 1,
+        // The default single instance is one native connection per file for
+        // the whole process, which every Flutter engine shares, so a
+        // background engine closing its store closed the UI isolate's
+        // connection too (#317). A connection of its own lets each engine
+        // close it, and concurrent access is what WAL below is for.
+        singleInstance: false,
         onConfigure: (database) async {
           // The UI isolate and every background WorkManager engine open this
           // same file. On the default rollback journal a background write locks
@@ -149,12 +173,6 @@ class AppCheckStore {
         },
       ),
     );
-    try {
-      return await pending;
-    } catch (_) {
-      if (identical(_database, pending)) _database = null;
-      rethrow;
-    }
   }
 
   /// [singleId] reads one Android package: its own row plus a row for every

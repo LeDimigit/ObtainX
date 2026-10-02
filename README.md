@@ -26,6 +26,16 @@ ObtainX is a modern and supercharged fork of Obtainium. Re-engineered with a stu
 [<img src="docs/assets/badge_fdroid.png" alt="Get it on F-Droid" height="80">](https://f-droid.org/packages/dev.bikram.obtainx)
 [<img src="docs/assets/badge_github.png" alt="Get it on GitHub" height="80">](https://github.com/bikram-agarwal/ObtainX/releases/latest)
 
+<details><summary>Verification info</summary>
+
+- Package ID: `dev.bikram.obtainx`
+- SHA-256 hash of signing certificate:
+  ```text
+  64:37:E8:BE:94:51:BD:7D:02:21:55:11:D3:E5:04:A8:8C:50:BE:72:B6:DD:05:AC:4B:5B:87:F5:A2:05:B6:87
+  ```
+- Note: The above signature is also valid for the F-Droid flavour of ObtainX, thanks to [reproducible builds](https://f-droid.org/docs/Reproducible_Builds/).
+</details>
+
 ## 🔄 Seamlessly bring your data from Obtainium
 
 If you want to try out **ObtainX** without losing your current setup, you can bring your existing app list over in seconds:

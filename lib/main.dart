@@ -180,9 +180,6 @@ Future<void> loadTranslations() async {
 /// Unique task name used by WorkManager for periodic background update checks.
 const _workManagerTaskName = 'obtainiumBgUpdateCheck';
 
-/// WorkManager refuses anything shorter, and silently clamps to it.
-const int _minimumWorkManagerIntervalMinutes = 15;
-
 @pragma('vm:entry-point')
 void callbackDispatcher() {
   Workmanager().executeTask((taskName, inputData) async {
@@ -409,7 +406,7 @@ class _ObtainiumState extends State<Obtainium> with WidgetsBindingObserver {
           _workManagerTaskName,
           frequency: Duration(
             minutes: max(
-              _minimumWorkManagerIntervalMinutes,
+              minimumWorkManagerIntervalMinutes,
               intervalMinutesToRegister,
             ),
           ),
@@ -521,7 +518,9 @@ class _ObtainiumState extends State<Obtainium> with WidgetsBindingObserver {
           playSound: false,
         ),
         foregroundTaskOptions: ForegroundTaskOptions(
-          eventAction: ForegroundTaskEventAction.repeat(900000),
+          eventAction: ForegroundTaskEventAction.repeat(
+            foregroundServiceRepeatInterval.inMilliseconds,
+          ),
           autoRunOnBoot: true,
           autoRunOnMyPackageReplaced: true,
           allowWakeLock: true,

@@ -1908,6 +1908,9 @@ class SettingsProvider with ChangeNotifier {
 
   set useFGService(bool val) {
     prefs?.setBool('useFGService', val);
+    // The cached due time was derived from the old wake period (see
+    // bgCheckEarlyBy).
+    bgNextCheckDue = null;
     notifyListeners();
   }
 

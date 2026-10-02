@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:obtainium/providers/apps_provider.dart';
@@ -6,7 +7,7 @@ import 'package:obtainium/providers/settings_provider.dart';
 import 'package:obtainium/providers/source_provider.dart';
 import 'package:obtainium/services/app_check_store.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:sqflite/sqflite.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 class _DueTestProvider implements AppsProvider {
   @override
@@ -74,15 +75,44 @@ class _FailingFactory implements DatabaseFactory {
   }
 }
 
+/// Opens real (FFI) databases, keeping each one and the options it was opened
+/// with, so a test can close a connection behind the store's back the way
+/// another engine sharing it would.
+class _RecordingFactory implements DatabaseFactory {
+  final List<Database> opened = [];
+  final List<OpenDatabaseOptions?> options = [];
+
+  @override
+  Future<Database> openDatabase(
+    String path, {
+    OpenDatabaseOptions? options,
+  }) async {
+    this.options.add(options);
+    final Database database = await databaseFactoryFfi.openDatabase(
+      path,
+      options: options,
+    );
+    opened.add(database);
+    return database;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) {
+    return super.noSuchMethod(invocation);
+  }
+}
+
 /// [SettingsProvider.initializeSettings] reaches for path_provider, which has
 /// no implementation in a unit test; the prefs handle is all these cases need.
 Future<_DueTestProvider> _provider({
   int updateInterval = 1440,
   bool onlyInstalledOrTrackOnly = false,
+  bool useFGService = false,
 }) async {
   SharedPreferences.setMockInitialValues({
     'updateInterval': updateInterval,
     'onlyCheckInstalledOrTrackOnlyApps': onlyInstalledOrTrackOnly,
+    'useFGService': useFGService,
   });
   final provider = _DueTestProvider();
   provider.settingsProvider.prefs = await SharedPreferences.getInstance();
@@ -173,6 +203,147 @@ void main() {
       );
 
       expect(provider.earliestNextUpdateCheckDue(), isNull);
+    });
+
+    test('earlyBy brings the due time forward by the same margin', () async {
+      final provider = await _provider();
+      final checked = DateTime.now().subtract(const Duration(hours: 2));
+      provider.apps['a'] = AppInMemory(
+        _app(id: 'a', lastUpdateCheck: checked),
+        null,
+        null,
+        null,
+      );
+
+      expect(
+        provider.earliestNextUpdateCheckDue(earlyBy: const Duration(hours: 12)),
+        checked.add(const Duration(hours: 12)),
+      );
+    });
+  });
+
+  group('getAppsSortedByUpdateCheckTime earlyBy', () {
+    // A 24-hour interval: one app is 20 hours into it, the other 6.
+    Future<_DueTestProvider> withTwoApps() async {
+      final provider = await _provider();
+      provider.apps['nearlyDue'] = AppInMemory(
+        _app(
+          id: 'nearlyDue',
+          lastUpdateCheck: DateTime.now().subtract(const Duration(hours: 20)),
+        ),
+        null,
+        null,
+        null,
+      );
+      provider.apps['recent'] = AppInMemory(
+        _app(
+          id: 'recent',
+          lastUpdateCheck: DateTime.now().subtract(const Duration(hours: 6)),
+        ),
+        null,
+        null,
+        null,
+      );
+      return provider;
+    }
+
+    test('without a margin only apps past their interval are due', () async {
+      final provider = await withTwoApps();
+
+      expect(provider.getAppsSortedByUpdateCheckTime(), isEmpty);
+    });
+
+    test('an app due within the margin is checked now', () async {
+      final provider = await withTwoApps();
+
+      expect(
+        provider.getAppsSortedByUpdateCheckTime(
+          earlyBy: const Duration(hours: 12),
+        ),
+        ['nearlyDue'],
+      );
+    });
+  });
+
+  group('bgCheckEarlyBy', () {
+    test('is half the WorkManager wake period', () async {
+      final provider = await _provider(updateInterval: 1440);
+
+      expect(
+        bgCheckEarlyBy(provider.settingsProvider),
+        const Duration(hours: 12),
+      );
+    });
+
+    test('the foreground service wakes on its own repeat', () async {
+      final provider = await _provider(
+        updateInterval: 1440,
+        useFGService: true,
+      );
+
+      expect(
+        bgCheckEarlyBy(provider.settingsProvider),
+        foregroundServiceRepeatInterval ~/ 2,
+      );
+    });
+  });
+
+  group('bgInstallRetryDelay', () {
+    test('doubles from 15 minutes for each failure in a row', () {
+      expect(bgInstallRetryDelay(1), const Duration(minutes: 15));
+      expect(bgInstallRetryDelay(2), const Duration(minutes: 30));
+      expect(bgInstallRetryDelay(3), const Duration(minutes: 60));
+      expect(bgInstallRetryDelay(4), const Duration(minutes: 120));
+    });
+
+    test('stops once the retries are used up', () {
+      expect(bgInstallRetryDelay(5), isNull);
+      expect(bgInstallRetryDelay(0), isNull);
+    });
+  });
+
+  group('AppCheckStore connection', () {
+    late Directory directory;
+
+    setUp(() {
+      sqfliteFfiInit();
+      directory = Directory.systemTemp.createTempSync('app_checks_test');
+    });
+
+    tearDown(() {
+      directory.deleteSync(recursive: true);
+    });
+
+    test('opens a connection of its own, not the shared instance', () async {
+      final factory = _RecordingFactory();
+      final store = AppCheckStore(
+        '${directory.path}/app_checks.db',
+        factory: factory,
+      );
+
+      await store.read();
+      await store.close();
+
+      expect(factory.options.single?.singleInstance, isFalse);
+    });
+
+    test('reopens a connection that was closed under it', () async {
+      final factory = _RecordingFactory();
+      final store = AppCheckStore(
+        '${directory.path}/app_checks.db',
+        factory: factory,
+      );
+      await store.save([
+        {'id': 'a', 'revision': 'r1', 'checked': 1},
+      ]);
+
+      // What a background engine did to the UI isolate's shared connection.
+      await factory.opened.single.close();
+
+      expect((await store.read()).keys, ['a']);
+      expect(factory.opened, hasLength(2));
+      expect(store.isAvailable, isTrue);
+      await store.close();
     });
   });
 

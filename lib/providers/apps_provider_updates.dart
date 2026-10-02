@@ -809,14 +809,17 @@ extension AppsProviderUpdates on AppsProvider {
   /// Returns app IDs sorted by last update check time, oldest first.
   /// When [forceAll] is false, only includes apps whose per-app lastUpdateCheck
   /// is older than the configured update interval (or null — never checked).
-  /// When [forceAll] is true, includes all apps regardless of interval.
+  /// [earlyBy] also includes apps that come due within that much of now (see
+  /// [bgCheckEarlyBy]). When [forceAll] is true, includes all apps regardless
+  /// of interval.
   List<String> getAppsSortedByUpdateCheckTime({
     bool onlyCheckInstalledOrTrackOnlyApps = false,
     bool forceAll = false,
+    Duration earlyBy = Duration.zero,
   }) {
-    final minAge = DateTime.now().subtract(
-      Duration(minutes: settingsProvider.updateInterval),
-    );
+    final minAge = DateTime.now()
+        .add(earlyBy)
+        .subtract(Duration(minutes: settingsProvider.updateInterval));
     final List<String> appIds = apps.values
         .where((app) => !app.app.settings.getBool('onDemandOnly'))
         .where(
@@ -851,11 +854,12 @@ extension AppsProviderUpdates on AppsProvider {
   /// something is due already (or checking is disabled). Applies the same
   /// eligibility filters as [getAppsSortedByUpdateCheckTime], so a background
   /// wake-up can trust it to decide whether loading the app records is worth
-  /// it at all.
-  DateTime? earliestNextUpdateCheckDue() {
+  /// it at all. Pass the same [earlyBy] as that call, which moves each due
+  /// time that much sooner.
+  DateTime? earliestNextUpdateCheckDue({Duration earlyBy = Duration.zero}) {
     final int intervalMinutes = settingsProvider.updateInterval;
     if (intervalMinutes <= 0) return null;
-    final Duration interval = Duration(minutes: intervalMinutes);
+    final Duration interval = Duration(minutes: intervalMinutes) - earlyBy;
     DateTime? earliest;
     for (final listing in apps.values) {
       final App app = listing.app;
