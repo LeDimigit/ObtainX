@@ -874,6 +874,19 @@ enum _UnsavedAction { keepEditing, discard, saveAndExit }
   return (title: tr('needsAttention'), message: message);
 }
 
+/// Whether [error], from a failed install of [app], is the failure that
+/// install recorded as Needs attention, so [needsAttentionPageNotice] already
+/// says in plain words what went wrong.
+bool installFailureHasPageNotice(Object error, App app) {
+  final Object appError = error is MultiAppMultiError
+      ? error.rawErrors[app.listingKey] ?? error
+      : error;
+  final String? code = needsAttentionCodeOfInstallError(appError);
+  return code != null &&
+      app.additionalSettings[needsAttentionCodeKey] == code &&
+      needsAttentionPageNotice(app) != null;
+}
+
 class AppPage extends StatefulWidget {
   const AppPage({
     super.key,
@@ -3791,7 +3804,13 @@ class _AppPageState extends State<AppPage> with WidgetsBindingObserver {
             _showPageMessage(successMessage);
           }
         } catch (e) {
-          if (themeContext.mounted) {
+          if (!themeContext.mounted) return;
+          final App? failed = appsProvider.apps[widget.appId]?.app;
+          if (failed != null && installFailureHasPageNotice(e, failed)) {
+            // The stored notice explains it; the raw error would otherwise
+            // cover it until the app restarts.
+            appsProvider.clearAppPageError(widget.appId);
+          } else {
             _showPageError(e, title: tr('errorInstallingUpdate'));
           }
         }

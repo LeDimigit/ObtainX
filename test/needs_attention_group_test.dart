@@ -1,9 +1,11 @@
+import 'package:android_package_installer/android_package_installer.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:easy_localization/src/localization.dart';
 import 'package:easy_localization/src/translations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:obtainium/custom_errors.dart';
 import 'package:obtainium/pages/app.dart';
 import 'package:obtainium/pages/apps.dart';
 import 'package:obtainium/providers/apps_provider.dart';
@@ -226,6 +228,55 @@ void main() {
         ),
       ),
       isNull,
+    );
+  });
+
+  test('a recorded install failure is left to the stored notice', () {
+    final App steady = provider.apps['org.example.steady']!.app;
+    final App conflicted = steady.copyWith(
+      additionalSettings: {
+        ...steady.additionalSettings,
+        needsAttentionCodeKey: needsAttentionInstallConflict,
+      },
+    );
+    MultiAppMultiError failed(Object error) =>
+        MultiAppMultiError()..add(steady.listingKey, error, appName: 'Steady');
+    final Object conflict = failed(
+      InstallError(PackageInstallerStatus.failureConflict.code),
+    );
+
+    expect(installFailureHasPageNotice(conflict, conflicted), isTrue);
+    // Nothing was recorded, e.g. the listing went away mid-install.
+    expect(installFailureHasPageNotice(conflict, steady), isFalse);
+    // A different failure after an earlier conflict still shows itself.
+    expect(
+      installFailureHasPageNotice(
+        failed(InstallError(PackageInstallerStatus.failureStorage.code)),
+        conflicted,
+      ),
+      isFalse,
+    );
+    expect(
+      installFailureHasPageNotice(
+        failed(ObtainiumError('connection reset')),
+        conflicted,
+      ),
+      isFalse,
+    );
+
+    final App idChanged = steady.copyWith(
+      additionalSettings: {
+        ...steady.additionalSettings,
+        needsAttentionCodeKey: needsAttentionIdChanged,
+        needsAttentionDetailKey: 'org.example.other',
+      },
+    );
+    expect(
+      installFailureHasPageNotice(
+        failed(IDChangedError('org.example.other')),
+        idChanged,
+      ),
+      isTrue,
     );
   });
 }

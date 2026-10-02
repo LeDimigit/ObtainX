@@ -160,6 +160,18 @@ String? installFailureNeedsAttentionCode(int installerStatus) =>
       _ => null,
     };
 
+/// The Needs attention code a failed install recorded before throwing
+/// [error], or null when that failure isn't recorded.
+String? needsAttentionCodeOfInstallError(Object error) {
+  if (error is IDChangedError) return needsAttentionIdChanged;
+  final Object? installerStatus = error is InstallError
+      ? error.data['errorCode']
+      : null;
+  return installerStatus is int
+      ? installFailureNeedsAttentionCode(installerStatus)
+      : null;
+}
+
 bool appNeedsAttention(App app) =>
     app.hasPendingRepoRename || appHasBlockingAttention(app);
 
