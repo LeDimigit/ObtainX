@@ -90,6 +90,34 @@ bool appHasActionableUpdate(App app) {
   return versionDecisionForApp(app).relation == VersionRelation.older;
 }
 
+/// The device runs a newer build than the source's latest release, and that
+/// release exists: the app page's Downgrade action (#327), which installs it,
+/// or for a track-only app opens its page as Update does. Never an update, so
+/// lists, notifications and background installs, which go by
+/// [appHasActionableUpdate], keep ignoring it.
+bool appOffersDowngrade(App app) =>
+    app.installedVersion != null &&
+    app.latestVersion.isNotEmpty &&
+    // Also reads as newer on device, but there is no release to go to.
+    !appHasNoMatchingRelease(app) &&
+    versionDecisionForApp(app).relation == VersionRelation.newer;
+
+/// Records a by-hand downgrade of a track-only app whose package ObtainX can't
+/// read, so its installed version is the user's own mark. Unlike a plain
+/// [acknowledgeSourceRelease], which keeps a standard-detection app's installed
+/// version, the mark moves down to the source's release.
+App markTrackOnlyDowngraded(App app) {
+  final App acknowledged = acknowledgeSourceRelease(app);
+  return acknowledged.copyWith(
+    installedVersion: app.latestVersion,
+    additionalSettings:
+        Map<String, dynamic>.from(acknowledged.additionalSettings)
+          ..[trackOnlyUserMarkedInstalledKey] = true
+          ..['trackOnlyUndeterminedInstalledVersion'] = false
+          ..remove(installStatusResetKey),
+  );
+}
+
 bool versionOrderUncertainUpdate(App app) {
   if (app.installedVersion == null ||
       app.latestVersion.isEmpty ||

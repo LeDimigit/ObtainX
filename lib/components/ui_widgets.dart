@@ -22,15 +22,20 @@ Future<void> copyToClipboard(BuildContext context, String text) async {
 /// [reason] it's on, and taps go to [child] alone.
 ///
 /// Works because a control that's off claims no taps, so this one gets them.
+///
+/// Set [scaffoldHasBottomBar] on a page whose Scaffold has its own bottom bar,
+/// as for [buildAppSnackBar]; without it the warning floats far above that bar.
 class ExplainedWhenOff extends StatelessWidget {
   const ExplainedWhenOff({
     super.key,
     required this.reason,
     required this.child,
+    this.scaffoldHasBottomBar = false,
   });
 
   final String? reason;
   final Widget child;
+  final bool scaffoldHasBottomBar;
 
   @override
   Widget build(BuildContext context) {
@@ -40,7 +45,14 @@ class ExplainedWhenOff extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       onTap: () => ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
-        ..showSnackBar(buildAppSnackBar(context, why, type: ToastType.warning)),
+        ..showSnackBar(
+          buildAppSnackBar(
+            context,
+            why,
+            type: ToastType.warning,
+            scaffoldHasBottomBar: scaffoldHasBottomBar,
+          ),
+        ),
       child: child,
     );
   }

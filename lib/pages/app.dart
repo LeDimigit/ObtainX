@@ -18,6 +18,7 @@ import 'package:obtainium/components/app_bottom_sheet.dart';
 import 'package:obtainium/components/app_page_section_title.dart';
 import 'package:obtainium/components/app_smooth_surface.dart';
 import 'package:obtainium/components/category_action_chip.dart';
+import 'package:obtainium/components/ui_widgets.dart' show ExplainedWhenOff;
 import 'package:obtainium/pages/additional_options_page.dart';
 import 'package:obtainium/pages/page_route_slide_up.dart';
 import 'package:obtainium/theme/app_dialog_theme.dart';
@@ -663,6 +664,9 @@ int appPageSettingsRebuildToken(SettingsProvider settings) {
     settings.cardCornerScale,
     settings.reduceVisualEffects,
     settings.updateButtonsAtTopOfAppPage,
+    // Whether the Downgrade action can run.
+    settings.installerMode,
+    settings.enableDowngradeModules,
     Object.hashAll(
       settings.categories.entries.map((e) => '${e.key}=${e.value}'),
     ),
@@ -1017,6 +1021,9 @@ class _AppPageState extends State<AppPage> with WidgetsBindingObserver {
   String? _signingCertificateLoadKey;
   Future<SigningCertificateInfo?>? _signingCertificateInfoFuture;
   bool? _uses24HourFormat;
+  // Package presence only: whether a module may be used is a setting read at
+  // build time, so toggling it needs no refresh here.
+  bool _downgradeModuleInstalled = false;
 
   // Cache for the per-page ThemeData derived from the icon color scheme.
   // Recomputed only when the icon scheme key or parent brightness changes.
@@ -1127,10 +1134,19 @@ class _AppPageState extends State<AppPage> with WidgetsBindingObserver {
     });
   }
 
+  Future<void> _refreshDowngradeModuleInstalled() async {
+    final bool installed = await isDowngradeModuleInstalled();
+    if (!mounted || installed == _downgradeModuleInstalled) return;
+    setState(() {
+      _downgradeModuleInstalled = installed;
+    });
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(_refreshUses24HourFormat());
+      unawaited(_refreshDowngradeModuleInstalled());
     }
   }
 
@@ -2235,6 +2251,7 @@ class _AppPageState extends State<AppPage> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     unawaited(_refreshUses24HourFormat());
+    unawaited(_refreshDowngradeModuleInstalled());
     // Cached per Android package, which is not the listing key once a package
     // is tracked from two stores.
     _storeAvailabilityCacheFuture = BulkScanCache.loadForApp(
@@ -3656,6 +3673,7 @@ class _AppPageState extends State<AppPage> with WidgetsBindingObserver {
       }
 
       final String updateLabel = sizeAnnotated(tr('update'));
+      final String downgradeLabel = sizeAnnotated(tr('downgrade'));
       final String installLabel = sizeAnnotated(tr('install'));
       final String markInstalledLabel = sizeAnnotated(tr('markInstalled'));
       final String markUpdatedLabel = sizeAnnotated(tr('markUpdated'));
@@ -3720,13 +3738,28 @@ class _AppPageState extends State<AppPage> with WidgetsBindingObserver {
           uncertainUpdate &&
           versionDecisionForApp(app.app).relation !=
               VersionRelation.sourceChanged;
+      // Newer on device: Downgrade replaces the dead Update button. It installs
+      // only where the chosen installer can put an older version on; a
+      // track-only app just opens the release page, and whatever installs the
+      // APK from there decides.
+      final bool offersDowngrade = app != null && appOffersDowngrade(app.app);
+      final bool canDowngrade =
+          offersDowngrade &&
+          (trackOnly ||
+              installerCanDowngrade(
+                installerModeKey: settingsProvider.installerMode,
+                downgradeModuleUsable:
+                    settingsProvider.enableDowngradeModules &&
+                    _downgradeModuleInstalled,
+              ));
       final bool primaryActionEnabled =
           !installActionBlocked &&
           // The source's last answer had nothing matching: there is no
           // release to install or mark, installed or not.
           !appHasNoMatchingRelease(app.app) &&
           (installedVersionIsNull ||
-              ((actionableUpdate || uncertainUpdate) && !skipActive));
+              ((actionableUpdate || uncertainUpdate) && !skipActive) ||
+              canDowngrade);
       final bool trackedFromApkMirror =
           Uri.tryParse(app?.app.url ?? '')?.host.contains('apkmirror.com') ==
           true;
@@ -3793,6 +3826,8 @@ class _AppPageState extends State<AppPage> with WidgetsBindingObserver {
         try {
           final successMessage = installedVersionIsNull
               ? tr('installed')
+              : offersDowngrade
+              ? tr('downgraded')
               : tr('appsUpdated');
           hapticHeavyImpact();
           final res = await appsProvider.downloadAndInstallLatestApps(
@@ -3814,6 +3849,42 @@ class _AppPageState extends State<AppPage> with WidgetsBindingObserver {
             _showPageError(e, title: tr('errorInstallingUpdate'));
           }
         }
+      }
+
+      // Android blocks downgrades because the older version inherits data it
+      // may not understand; with that guard lifted, the user should know.
+      Future<void> confirmAndDowngrade() async {
+        if (app == null) return;
+        final bool? confirmed = await _showPageDialog<bool>(
+          hostContext: context,
+          builder: (BuildContext dialogContext) => AlertDialog(
+            title: Text(
+              tr('downgradeToVersionQuestion', args: [app.app.latestVersion]),
+            ),
+            content: Text(tr('downgradeKeepsDataWarning')),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: Text(tr('cancel')),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: Text(tr('downgrade')),
+              ),
+            ],
+          ),
+        );
+        if (confirmed == true) await runInstallOrMarkUpdated();
+      }
+
+      Future<void> markTrackOnlyDowngradedByHand() async {
+        if (app == null) return;
+        hapticSelection();
+        await appsProvider.saveApps(
+          [markTrackOnlyDowngraded(app.app)],
+          attemptToCorrectInstallStatus: false,
+          updateInstalledInfo: false,
+        );
       }
 
       void openTrackOnlyReleasePage() {
@@ -3998,33 +4069,101 @@ class _AppPageState extends State<AppPage> with WidgetsBindingObserver {
         );
       }
 
+      // Track-only with no readable package: the installed version is the
+      // user's own mark, so nothing notices a by-hand downgrade unless they
+      // record it. With a readable package the device version is picked up.
+      if (offersDowngrade && trackOnly && app.installedInfo == null) {
+        const double dualButtonBarHeight = 52;
+        return wrapPrimaryBarWithSkip(
+          SizedBox(
+            height: dualButtonBarHeight,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: FilledButton(
+                    style: expressiveFilled,
+                    onPressed: installActionBlocked
+                        ? null
+                        : openTrackOnlyReleasePage,
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.center,
+                      child: Text(
+                        downgradeLabel,
+                        maxLines: 1,
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: FilledButton(
+                    style: expressiveFilled,
+                    onPressed: installActionBlocked
+                        ? null
+                        : markTrackOnlyDowngradedByHand,
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.center,
+                      child: Text(
+                        tr('markDowngraded'),
+                        maxLines: 1,
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+
       final Widget singlePrimaryButton = FilledButton(
         style: expressiveFilled,
-        onPressed: primaryActionEnabled ? runInstallOrMarkUpdated : null,
+        onPressed: primaryActionEnabled
+            ? (!offersDowngrade
+                  ? runInstallOrMarkUpdated
+                  : trackOnly
+                  ? openTrackOnlyReleasePage
+                  : confirmAndDowngrade)
+            : null,
         child: FittedBox(
           fit: BoxFit.scaleDown,
           alignment: Alignment.center,
           child: Text(
             installedVersionIsNull
                 ? (!trackOnly ? installLabel : markInstalledLabel)
+                : offersDowngrade
+                ? downgradeLabel
                 : (!trackOnly ? updateLabel : markUpdatedLabel),
             maxLines: 1,
             textAlign: TextAlign.center,
           ),
         ),
       );
+      // A tap on the disabled button says why, as Settings' switches do; a
+      // tooltip only answered a long-press, so a tap looked like nothing.
+      // Only while it's disabled: ExplainedWhenOff relies on the button
+      // claiming no taps.
+      final String? disabledReason = primaryActionEnabled
+          ? null
+          : buildVerificationBlocked
+          ? buildVerificationBlockedMessage!
+          : skipActive
+          ? tr('updateDisabledWhileVersionSkipped')
+          : offersDowngrade && !canDowngrade
+          ? tr('downgradeNeedsCapableInstaller')
+          : null;
       return wrapPrimaryBarWithSkip(
-        buildVerificationBlocked
-            ? Tooltip(
-                message: buildVerificationBlockedMessage!,
-                child: singlePrimaryButton,
-              )
-            : skipActive
-            ? Tooltip(
-                message: tr('updateDisabledWhileVersionSkipped'),
-                child: singlePrimaryButton,
-              )
-            : singlePrimaryButton,
+        ExplainedWhenOff(
+          reason: disabledReason,
+          // Positioned like this page's other snackbars.
+          scaffoldHasBottomBar: !widget.isEmbedded,
+          child: singlePrimaryButton,
+        ),
       );
     }
 

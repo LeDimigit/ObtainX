@@ -262,8 +262,8 @@ String storeFacingDownloadDisplayNameForApp(
 }
 
 /// True when the stock Android installer is being asked to install a lower
-/// version code. Shizuku and third-party installers handle their own downgrade
-/// capabilities and must not be blocked by the stock-installer warning.
+/// version code. Other installers are not pre-checked: a third-party installer
+/// may be able to downgrade, and Shizuku/Dhizuku get Android's own refusal.
 bool isStockInstallerDowngrade({
   required int? installedVersionCode,
   required int? newVersionCode,
@@ -296,6 +296,16 @@ Future<bool> isDowngradeModuleInstalled() async {
   );
   return modules.any((PackageInfo? info) => info != null);
 }
+
+/// Whether the installer in [installerModeKey] can put an older version over a
+/// newer one. A third-party installer decides for itself (a root one such as
+/// InstallerX can), so ObtainX lets it try. The stock installer, Shizuku and
+/// Dhizuku never request a downgrade, so Android refuses one unless a
+/// downgrade module is usable.
+bool installerCanDowngrade({
+  required String installerModeKey,
+  required bool downgradeModuleUsable,
+}) => installerModeKey == 'external' || downgradeModuleUsable;
 
 /// App download, install, and on-device package operations for [AppsProvider].
 extension AppsProviderInstall on AppsProvider {
