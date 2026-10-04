@@ -78,6 +78,10 @@ The same apps can be tracked from multiple stores — independently, simultaneou
 
 - **🧩 Advanced filter / RegEx assist** — A built-in helper walks you through building regex filters on any field that supports them. No regex knowledge required. Full details in the [Additional options guide](docs/additional-options-guide.md).
 - **⏭️ Skip version** — Skip a specific release you don't want without marking the app as "updated." The next release will still show up normally.
+- **🚩 Needs attention** — Never lose broken apps in a long list again. Apps with issues — like signature mismatches, broken filters, or renamed repos — automatically float to the top of list with clear, plain-English fixes. Once resolved, they drop right back into place.
+
+- **⬇️ Deliberate downgrades** — Need to jump off a buggy pre-release back to stable, or deal with a developer rolling back a release? When an app's source build is older than what you have installed, ObtainX provides an explicit Downgrade button with data-safety warnings. It keeps downgrades out of your update badges and background syncs, and adds support for CorePatch alongside Let Me Downgrade.
+
 - **💾 Save assets** — Option to automatically save update assets (e.g. APKs) to your chosen folder, during update process itself.
 
 ### 🎨 Interface & Experience
